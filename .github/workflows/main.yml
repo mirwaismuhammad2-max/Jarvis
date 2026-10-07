@@ -1,0 +1,64 @@
+name: Build Jarvis APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Keeps the same signing key between builds so new APKs install over old ones
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: jarvis-debug-keystore
+
+      - name: Create Capacitor Android project
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+          npm init -y
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor-community/speech-recognition@7
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.mu.jarvis",
+            "appName": "Jarvis",
+            "webDir": "www",
+            "plugins": { "CapacitorHttp": { "enabled": true } }
+          }
+          EOF
+          npx cap add android
+
+      - name: Add permissions
+        run: |
+          sed -i 's#</manifest>#<uses-permission android:name="android.permission.RECORD_AUDIO" /><uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" /><uses-permission android:name="android.permission.VIBRATE" /><queries><intent><action android:name="android.speech.RecognitionService" /></intent></queries></manifest>#' android/app/src/main/AndroidManifest.xml
+
+      - name: Build APK
+        run: |
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Publish APK to Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Jarvis build ${{ github.run_number }}
+          files: android/app/build/outputs/apk/debug/app-debug.apk
